@@ -561,7 +561,6 @@ static int ad400x_probe(struct spi_device *spi)
 	indio_dev->dev.parent = &spi->dev;
 	indio_dev->name = spi_get_device_id(spi)->name;
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_HARDWARE;
-	indio_dev->setup_ops = &ad400x_buffer_setup_ops;
 	indio_dev->info = &ad400x_info;
 	indio_dev->channels = &st->chip->chan_spec;
 	indio_dev->num_channels = 1;
@@ -574,12 +573,23 @@ static int ad400x_probe(struct spi_device *spi)
 	if (ret < 0)
 		return ret;
 
-	buffer = devm_iio_dmaengine_buffer_alloc(indio_dev->dev.parent, "rx",
-						 &dma_buffer_ops, indio_dev);
-	if (IS_ERR(buffer))
-		return PTR_ERR(buffer);
+	if (spi_engine_offload_supported(spi)) {
+		buffer = devm_iio_dmaengine_buffer_alloc(indio_dev->dev.parent,
+							 "rx", &dma_buffer_ops,
+							 indio_dev);
+		if (IS_ERR(buffer))
+			return dev_err_probe(&spi->dev, PTR_ERR(buffer),
+					     "Error initializing buffer: %ld\n",
+					     PTR_ERR(buffer));
 
-	iio_device_attach_buffer(indio_dev, buffer);
+		ret = iio_device_attach_buffer(indio_dev, buffer);
+		if (ret < 0)
+			return dev_err_probe(&spi->dev, ret,
+					     "Error attaching buffer: %d\n",
+					     ret);
+
+		indio_dev->setup_ops = &ad400x_buffer_setup_ops;
+	}
 
 	if (device_property_present(&spi->dev, "pwms"))
 		ad400x_pwm_setup(spi, st);
