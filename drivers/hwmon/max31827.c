@@ -12,6 +12,7 @@
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 
 #define MAX31827_T_REG	0x0
 #define MAX31827_CONFIGURATION_REG	0x2
@@ -406,11 +407,17 @@ static const struct hwmon_chip_info max31827_chip_info = {
 	.info = max31827_info,
 };
 
+static void max31827_regulator_disable(void *regulator)
+{
+	regulator_disable(regulator);
+}
+
 static int max31827_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
 	struct device *hwmon_dev;
 	struct max31827_state *st;
+	struct regulator *regulator;
 	int err;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_WORD_DATA))
@@ -426,6 +433,22 @@ static int max31827_probe(struct i2c_client *client)
 	if (IS_ERR(st->regmap))
 		return dev_err_probe(dev, PTR_ERR(st->regmap),
 				     "Failed to allocate regmap.\n");
+
+	regulator = devm_regulator_get(dev, "vref");
+	if (IS_ERR(regulator))
+		return dev_err_probe(dev, PTR_ERR(regulator),
+				     "Failed to enable specified vref supply\n");
+
+	err = regulator_enable(regulator);
+	if (err)
+		return dev_err_probe(dev, err,
+				     "Failed to enable vref regulator\n");
+
+	err = devm_add_action_or_reset(dev, max31827_regulator_disable,
+				       regulator);
+	if (err)
+		return dev_err_probe(dev, err,
+				     "Failed to add regulator disable\n");
 
 	err = max31827_init_client(st);
 	if (err)
